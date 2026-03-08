@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 210 20% 99%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --primary: 211 77% 39%;
+  --primary-foreground: 0 0% 100%;
+  --muted: 215 18% 95%;
+  --muted-foreground: 216 16% 45%;
+  --accent: 211 90% 96%;
+  --accent-foreground: 221 39% 11%;
+  --destructive: 0 74% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 214 20% 88%;
+  --input: 214 20% 88%;
+  --ring: 211 77% 39%;
+  --radius: 0.8rem;
+}
+
+html,
+body {
+  width: 100%;
+  min-height: 100%;
+}
+
+body {
+  @apply bg-background text-foreground antialiased;
+  font-family: "Avenir Next", "Nunito Sans", "Segoe UI", sans-serif;
+}
