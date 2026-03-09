@@ -87,12 +87,22 @@ async function handleWork(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data: completedInspections, error: inspectionsError } = await supabaseAdmin
+  const requestUrl = new URL(request.url);
+  const requestedInspectionId = requestUrl.searchParams.get("inspection_id")?.trim() || null;
+
+  let inspectionsQuery = supabaseAdmin
     .from("inspections")
     .select("id,user_id,status,completed_at")
     .eq("status", "completed")
-    .order("completed_at", { ascending: false, nullsFirst: false })
-    .limit(CANDIDATE_LIMIT);
+    .order("completed_at", { ascending: false, nullsFirst: false });
+
+  if (requestedInspectionId) {
+    inspectionsQuery = inspectionsQuery.eq("id", requestedInspectionId).limit(1);
+  } else {
+    inspectionsQuery = inspectionsQuery.limit(CANDIDATE_LIMIT);
+  }
+
+  const { data: completedInspections, error: inspectionsError } = await inspectionsQuery;
 
   if (inspectionsError) {
     return NextResponse.json(
@@ -109,11 +119,13 @@ async function handleWork(request: Request) {
   const inspectionIds = candidates.map((row) => row.id);
   const { reportsByInspectionId } = await listInspectionReportsByInspectionIds(inspectionIds);
 
-  const targets = candidates
-    .filter((inspection) =>
-      reportNeedsGeneration(inspection, reportsByInspectionId.get(inspection.id))
-    )
-    .slice(0, MAX_REPORTS_PER_RUN);
+  const targets = requestedInspectionId
+    ? candidates.slice(0, 1)
+    : candidates
+        .filter((inspection) =>
+          reportNeedsGeneration(inspection, reportsByInspectionId.get(inspection.id))
+        )
+        .slice(0, MAX_REPORTS_PER_RUN);
 
   if (!targets.length) {
     return NextResponse.json({ processed: 0, reason: "No reports pending generation." });
