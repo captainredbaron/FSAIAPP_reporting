@@ -14,7 +14,7 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 const MAX_REPORTS_PER_RUN = 1;
-const CANDIDATE_LIMIT = 60;
+const CANDIDATE_LIMIT = 20;
 const STALE_GENERATING_MS = 15 * 60 * 1000;
 
 type InspectionStatus = "draft" | "queued" | "processing" | "completed" | "failed";

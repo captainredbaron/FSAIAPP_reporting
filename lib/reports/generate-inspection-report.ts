@@ -131,7 +131,7 @@ function drawHeader(doc: PDFKit.PDFDocument, logoBuffer: Buffer | null) {
   doc.y = 80;
 }
 
-async function fetchThumbnailBuffer(pathValue: string, timeoutMs = 800) {
+async function fetchThumbnailBuffer(pathValue: string, timeoutMs = 350) {
   try {
     const { data, error } = await supabaseAdmin.storage
       .from("inspection-images")
@@ -190,12 +190,12 @@ export async function generateInspectionReportPdf(inspectionId: string, userId: 
       .select("id,section_code,section_title,sort_order")
       .eq("inspection_id", inspectionId)
       .order("sort_order", { ascending: true })
-      .limit(16),
+      .limit(6),
     supabaseAdmin
       .from("section_assessments")
       .select("section_code,section_title,compliance_status,score,rationale")
       .eq("inspection_id", inspectionId)
-      .limit(60),
+      .limit(24),
     supabaseAdmin
       .from("findings")
       .select(
@@ -203,7 +203,7 @@ export async function generateInspectionReportPdf(inspectionId: string, userId: 
       )
       .eq("inspection_id", inspectionId)
       .order("created_at", { ascending: true })
-      .limit(100)
+      .limit(36)
   ]);
 
   const sections = (sectionsResponse.data ?? []) as ChecklistSectionRecord[];
@@ -215,7 +215,7 @@ export async function generateInspectionReportPdf(inspectionId: string, userId: 
           .from("inspection_checklist_images")
           .select("inspection_checklist_section_id,storage_path")
           .in("inspection_checklist_section_id", sectionIds)
-          .limit(80)
+          .limit(18)
       ).data ?? [])
     : [];
 
@@ -244,7 +244,7 @@ export async function generateInspectionReportPdf(inspectionId: string, userId: 
   const thumbnailSectionIds = sections
     .map((section) => section.id)
     .filter((sectionId) => Boolean(primaryImagePathBySectionId.get(sectionId)))
-    .slice(0, 6);
+    .slice(0, 1);
 
   const thumbnailBySectionId = new Map<string, Buffer>();
   await Promise.all(
@@ -267,7 +267,7 @@ export async function generateInspectionReportPdf(inspectionId: string, userId: 
     doc.on("pageAdded", renderHeader);
 
     const startedAt = Date.now();
-    const budgetMs = 7800;
+    const budgetMs = 2200;
     const overBudget = () => Date.now() - startedAt > budgetMs;
     let truncated = false;
 
@@ -305,7 +305,7 @@ export async function generateInspectionReportPdf(inspectionId: string, userId: 
         break;
       }
 
-      ensureSpace(doc, 150);
+      ensureSpace(doc, 120);
       doc.moveDown(0.6);
       doc.font("Helvetica-Bold").fontSize(12).text(`Section: ${section.section_title}`);
       doc.font("Helvetica").fontSize(10).text(`Code: ${section.section_code}`);
@@ -334,7 +334,7 @@ export async function generateInspectionReportPdf(inspectionId: string, userId: 
         doc.text("Thumbnail unavailable.");
       }
 
-      const sectionFindings = (findingsBySectionCode.get(section.section_code) ?? []).slice(0, 5);
+      const sectionFindings = (findingsBySectionCode.get(section.section_code) ?? []).slice(0, 3);
       if (sectionFindings.length > 0) {
         doc.font("Helvetica-Bold").text("Findings");
         doc.font("Helvetica");
