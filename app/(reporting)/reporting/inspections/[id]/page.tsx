@@ -207,16 +207,11 @@ export default async function ReportingInspectionDetailPage({
           <Link href="/reporting/inspections">Back to Explorer</Link>
         </Button>
         {inspectionRecord.status === "completed" ? (
-          <div className="flex gap-2">
-            <Button variant="outline" asChild>
-              <Link href={`/api/inspections/${inspectionRecord.id}/report`}>Download PDF</Link>
-            </Button>
-            <Button variant="outline" asChild>
-              <Link href={`/api/inspections/${inspectionRecord.id}/report?include_photos=1`}>
-                PDF + Photos
-              </Link>
-            </Button>
-          </div>
+          <Button variant="outline" asChild>
+            <Link href={`/api/inspections/${inspectionRecord.id}/report`} target="_blank" rel="noreferrer">
+              PDF
+            </Link>
+          </Button>
         ) : null}
       </div>
 
