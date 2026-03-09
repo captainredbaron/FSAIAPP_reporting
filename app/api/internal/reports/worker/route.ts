@@ -24,7 +24,6 @@ interface CompletedInspectionRecord {
   user_id: string;
   status: InspectionStatus;
   completed_at: string | null;
-  updated_at: string | null;
 }
 
 function hasValidToken(request: Request) {
@@ -90,7 +89,7 @@ async function handleWork(request: Request) {
 
   const { data: completedInspections, error: inspectionsError } = await supabaseAdmin
     .from("inspections")
-    .select("id,user_id,status,completed_at,updated_at")
+    .select("id,user_id,status,completed_at")
     .eq("status", "completed")
     .order("completed_at", { ascending: false, nullsFirst: false })
     .limit(CANDIDATE_LIMIT);
