@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import PDFDocument from "pdfkit";
 import { NextResponse } from "next/server";
 import { format } from "date-fns";
@@ -57,6 +59,8 @@ interface FindingRecord {
   control_area: string;
 }
 
+let cachedLogoBuffer: Buffer | null | undefined;
+
 function buildPdfBuffer(build: (doc: PDFKit.PDFDocument) => Promise<void>) {
   return new Promise<Buffer>(async (resolve, reject) => {
     const doc = new PDFDocument({
@@ -94,11 +98,51 @@ function safeText(value?: string | null) {
   return value.trim();
 }
 
-async function fetchImageBuffer(path: string, timeoutMs = 8000) {
+async function loadLogoBuffer() {
+  if (cachedLogoBuffer !== undefined) {
+    return cachedLogoBuffer;
+  }
+
+  try {
+    const logoPath = path.join(process.cwd(), "public", "branding", "gwr-logo.png");
+    cachedLogoBuffer = await readFile(logoPath);
+    return cachedLogoBuffer;
+  } catch {
+    cachedLogoBuffer = null;
+    return null;
+  }
+}
+
+function drawHeader(doc: PDFKit.PDFDocument, logoBuffer: Buffer | null) {
+  const x = doc.page.margins.left;
+  const right = doc.page.width - doc.page.margins.right;
+  const top = 18;
+
+  if (logoBuffer) {
+    try {
+      doc.image(logoBuffer, x, top, {
+        fit: [190, 46]
+      });
+    } catch {
+      // Fallback to text-only header when image embedding fails.
+    }
+  }
+
+  doc.font("Helvetica-Bold").fontSize(9).fillColor("#111");
+  doc.text("GWR Reporting Portal", x, top + 6, { align: "right" });
+  doc.font("Helvetica").fontSize(8).fillColor("#555");
+  doc.text("AI-assisted inspection report", x, top + 20, { align: "right" });
+
+  doc.moveTo(x, 70).lineTo(right, 70).lineWidth(1).strokeColor("#d7d7d7").stroke();
+  doc.fillColor("black");
+  doc.y = 80;
+}
+
+async function fetchImageBuffer(pathValue: string, timeoutMs = 2500) {
   try {
     const { data, error } = await supabaseAdmin.storage
       .from("inspection-images")
-      .createSignedUrl(path, 60);
+      .createSignedUrl(pathValue, 60);
 
     if (error || !data?.signedUrl) {
       return null;
@@ -128,10 +172,11 @@ async function fetchImageBuffer(path: string, timeoutMs = 8000) {
 }
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
+  const includePhotos = new URL(request.url).searchParams.get("include_photos") === "1";
 
   const supabase = await createServerSupabaseClient();
   const {
@@ -214,9 +259,17 @@ export async function GET(
     return acc;
   }, new Map());
 
+  const logoBuffer = await loadLogoBuffer();
+
   const pdfBuffer = await buildPdfBuffer(async (doc) => {
-    doc.font("Helvetica-Bold").fontSize(16).text("GWR AI Food Safety Inspector");
-    doc.fontSize(12).text("Inspection Report");
+    const renderHeader = () => drawHeader(doc, logoBuffer);
+    renderHeader();
+    doc.on("pageAdded", renderHeader);
+
+    let embeddedPhotos = 0;
+    const maxEmbeddedPhotos = 8;
+
+    doc.font("Helvetica-Bold").fontSize(16).text("Inspection Report");
 
     doc.moveDown(0.6);
     doc.font("Helvetica").fontSize(10);
@@ -300,12 +353,26 @@ export async function GET(
         doc.font("Helvetica-Bold").text("Section Photos");
         doc.font("Helvetica");
 
-        for (const path of paths) {
+        if (!includePhotos) {
+          doc.text(
+            `Photos omitted in fast export (${paths.length} available). Add ?include_photos=1 to include limited previews.`
+          );
+          continue;
+        }
+
+        const previewPaths = paths.slice(0, 1);
+
+        for (const pathValue of previewPaths) {
+          if (embeddedPhotos >= maxEmbeddedPhotos) {
+            doc.text("Photo preview limit reached for this report.");
+            break;
+          }
+
           ensureSpace(doc, 210);
-          const imageBuffer = await fetchImageBuffer(path);
+          const imageBuffer = await fetchImageBuffer(pathValue);
 
           if (!imageBuffer) {
-            doc.text(`Image unavailable: ${path}`);
+            doc.text(`Image unavailable: ${pathValue}`);
             continue;
           }
 
@@ -315,15 +382,22 @@ export async function GET(
               fit: [250, 180]
             });
             doc.y = imageTop + 188;
+            embeddedPhotos += 1;
           } catch {
-            doc.text(`Unsupported image format for embedding: ${path}`);
+            doc.text(`Unsupported image format for embedding: ${pathValue}`);
           }
+        }
+
+        if (paths.length > previewPaths.length) {
+          doc.text(`${paths.length - previewPaths.length} additional photos not embedded.`);
         }
       } else {
         doc.moveDown(0.3);
         doc.text("No photos recorded for this section.");
       }
     }
+
+    doc.removeListener("pageAdded", renderHeader);
   });
 
   const filename = `inspection-report-${inspectionRecord.id}.pdf`;

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { BarChart3, ClipboardList, LogOut } from "lucide-react";
 import { LogoutButton } from "@/components/auth/logout-button";
+import { GwrLogo } from "@/components/brand/gwr-logo";
 import { Button } from "@/components/ui/button";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -36,9 +37,11 @@ export default async function ReportingLayout({
     <div className="min-h-dvh bg-background">
       <header className="border-b border-border/80 bg-card/70 backdrop-blur">
         <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-3 px-6 py-4">
-          <div>
-            <p className="text-sm font-semibold text-muted-foreground">GWR</p>
-            <h1 className="text-xl font-semibold tracking-tight">Reporting Portal</h1>
+          <div className="flex items-center gap-4">
+            <GwrLogo priority />
+            <div className="hidden text-xs text-muted-foreground md:block">
+              Reporting Portal
+            </div>
           </div>
           <LogoutButton>
             <LogOut className="h-4 w-4" />
