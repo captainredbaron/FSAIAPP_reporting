@@ -365,11 +365,19 @@ export default async function ReportingExplorerPage({
                           )}
                         </td>
                         <td className="px-3 py-3 text-foreground">{findingsCount}</td>
-                        <td className="px-3 py-3 text-xs text-muted-foreground">
-                          {inspection.id}
+                        <td className="px-3 py-3 text-xs">
+                          <Link
+                            href={`/reporting/inspections/${inspection.id}`}
+                            className="font-medium text-primary underline-offset-4 hover:underline"
+                          >
+                            {inspection.id}
+                          </Link>
                         </td>
                         <td className="px-3 py-3">
                           <div className="flex flex-wrap gap-2">
+                            <Button size="sm" variant="outline" asChild>
+                              <Link href={`/reporting/inspections/${inspection.id}`}>Open</Link>
+                            </Button>
                             {inspection.status === "completed" ? (
                               <Button size="sm" variant="outline" asChild>
                                 <Link

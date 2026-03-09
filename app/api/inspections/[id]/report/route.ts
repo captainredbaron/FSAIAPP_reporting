@@ -138,7 +138,7 @@ function drawHeader(doc: PDFKit.PDFDocument, logoBuffer: Buffer | null) {
   doc.y = 80;
 }
 
-async function fetchImageBuffer(pathValue: string, timeoutMs = 2500) {
+async function fetchImageBuffer(pathValue: string, timeoutMs = 2000) {
   try {
     const { data, error } = await supabaseAdmin.storage
       .from("inspection-images")
@@ -224,22 +224,24 @@ export async function GET(
       )
       .eq("inspection_id", id)
       .order("created_at", { ascending: true })
+      .limit(300)
   ]);
 
   const sections = (sectionsResponse.data ?? []) as ChecklistSectionRecord[];
-  const sectionIds = sections.map((section) => section.id);
-
-  const { data: imageData } = sectionIds.length
-    ? await supabase
-        .from("inspection_checklist_images")
-        .select("inspection_checklist_section_id,storage_path")
-        .in("inspection_checklist_section_id", sectionIds)
-    : { data: [] as ChecklistImageRecord[] };
-
-  const checklistImages = (imageData ?? []) as ChecklistImageRecord[];
   const assessments =
     (sectionAssessmentsResponse.data ?? []) as SectionAssessmentRecord[];
   const findings = (findingsResponse.data ?? []) as FindingRecord[];
+
+  const sectionIds = sections.map((section) => section.id);
+  const checklistImages: ChecklistImageRecord[] = includePhotos
+    ? ((
+        await supabase
+          .from("inspection_checklist_images")
+          .select("inspection_checklist_section_id,storage_path")
+          .in("inspection_checklist_section_id", sectionIds)
+          .limit(120)
+      ).data ?? [])
+    : [];
 
   const assessmentByCode = new Map(
     assessments.map((assessment) => [assessment.section_code, assessment])
@@ -266,8 +268,13 @@ export async function GET(
     renderHeader();
     doc.on("pageAdded", renderHeader);
 
+    const startedAt = Date.now();
+    const timeBudgetMs = includePhotos ? 14000 : 7000;
+    const overBudget = () => Date.now() - startedAt > timeBudgetMs;
+
     let embeddedPhotos = 0;
-    const maxEmbeddedPhotos = 8;
+    const maxEmbeddedPhotos = includePhotos ? 6 : 0;
+    let truncatedForTimeout = false;
 
     doc.font("Helvetica-Bold").fontSize(16).text("Inspection Report");
 
@@ -305,6 +312,11 @@ export async function GET(
     doc.fillColor("black");
 
     for (const section of sections) {
+      if (overBudget()) {
+        truncatedForTimeout = true;
+        break;
+      }
+
       ensureSpace(doc, 120);
       doc.moveDown(0.9);
       doc.font("Helvetica-Bold").fontSize(13).text(`Section: ${section.section_title}`);
@@ -321,13 +333,18 @@ export async function GET(
         doc.text("Section Analysis: Not available.");
       }
 
-      const sectionFindings = findingsBySectionCode.get(section.section_code) ?? [];
+      const sectionFindings = (findingsBySectionCode.get(section.section_code) ?? []).slice(0, 12);
       if (sectionFindings.length > 0) {
         doc.moveDown(0.3);
         doc.font("Helvetica-Bold").text("Findings and Rectification");
         doc.font("Helvetica");
 
         for (const finding of sectionFindings) {
+          if (overBudget()) {
+            truncatedForTimeout = true;
+            break;
+          }
+
           ensureSpace(doc, 90);
           doc.moveDown(0.2);
           doc.font("Helvetica-Bold").text(
@@ -347,22 +364,24 @@ export async function GET(
         doc.text("No structured findings recorded for this section.");
       }
 
+      if (!includePhotos) {
+        continue;
+      }
+
       const paths = imagesBySectionId.get(section.id) ?? [];
       if (paths.length > 0) {
         doc.moveDown(0.4);
         doc.font("Helvetica-Bold").text("Section Photos");
         doc.font("Helvetica");
 
-        if (!includePhotos) {
-          doc.text(
-            `Photos omitted in fast export (${paths.length} available). Add ?include_photos=1 to include limited previews.`
-          );
-          continue;
-        }
-
         const previewPaths = paths.slice(0, 1);
 
         for (const pathValue of previewPaths) {
+          if (overBudget()) {
+            truncatedForTimeout = true;
+            break;
+          }
+
           if (embeddedPhotos >= maxEmbeddedPhotos) {
             doc.text("Photo preview limit reached for this report.");
             break;
@@ -391,10 +410,16 @@ export async function GET(
         if (paths.length > previewPaths.length) {
           doc.text(`${paths.length - previewPaths.length} additional photos not embedded.`);
         }
-      } else {
-        doc.moveDown(0.3);
-        doc.text("No photos recorded for this section.");
       }
+    }
+
+    if (truncatedForTimeout) {
+      ensureSpace(doc, 80);
+      doc.moveDown(0.6);
+      doc.font("Helvetica-Bold").fontSize(10).text("Report note");
+      doc.font("Helvetica").fontSize(9).text(
+        "This export was truncated to stay within serverless execution limits. Use detailed view pages in the portal for full inspection content."
+      );
     }
 
     doc.removeListener("pageAdded", renderHeader);
