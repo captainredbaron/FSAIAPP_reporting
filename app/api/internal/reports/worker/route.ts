@@ -1,28 +1,17 @@
 import { NextResponse } from "next/server";
-import {
-  buildInspectionReportPath,
-  listInspectionReportsByInspectionIds,
-  REPORTS_BUCKET,
-  type InspectionReportRow,
-  upsertInspectionReport,
-  uploadInspectionReportPdf
-} from "@/lib/reports/inspection-reports";
-import { generateInspectionReportPdf } from "@/lib/reports/generate-inspection-report";
+import { enqueueReportJobsForInspection } from "@/lib/reports/report-pipeline";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 20;
 
-const MAX_REPORTS_PER_RUN = 1;
-const CANDIDATE_LIMIT = 20;
-const STALE_GENERATING_MS = 15 * 60 * 1000;
-
-type InspectionStatus = "draft" | "queued" | "processing" | "completed" | "failed";
+const CANDIDATE_LIMIT = 100;
+const TEMPLATE_VERSION = process.env.REPORT_TEMPLATE_VERSION || "v2";
 
 interface CompletedInspectionRecord {
   id: string;
   user_id: string;
-  status: InspectionStatus;
+  status: "draft" | "queued" | "processing" | "completed" | "failed";
   completed_at: string | null;
 }
 
@@ -44,42 +33,22 @@ function hasValidToken(request: Request) {
   return validSecrets.some((secret) => secret === provided);
 }
 
-function parseTime(value: string | null | undefined) {
-  if (!value) return null;
-  const timestamp = Date.parse(value);
-  return Number.isNaN(timestamp) ? null : timestamp;
-}
+async function recoverStaleJobs() {
+  const { data, error } = await supabaseAdmin.rpc("reset_stale_report_jobs", {
+    p_stale_minutes: 15
+  });
 
-function reportNeedsGeneration(inspection: CompletedInspectionRecord, report?: InspectionReportRow) {
-  if (!report) {
-    return true;
+  if (error) {
+    return {
+      recovered: 0,
+      error: error.message
+    };
   }
 
-  if (report.status === "pending" || report.status === "failed") {
-    return true;
-  }
-
-  if (report.status === "generating") {
-    const updated = parseTime(report.updated_at);
-    if (!updated) {
-      return true;
-    }
-
-    return Date.now() - updated > STALE_GENERATING_MS;
-  }
-
-  if (!report.storage_path) {
-    return true;
-  }
-
-  const reportGeneratedAt = parseTime(report.generated_at);
-  const inspectionCompletedAt = parseTime(inspection.completed_at);
-
-  if (inspectionCompletedAt && reportGeneratedAt && reportGeneratedAt < inspectionCompletedAt) {
-    return true;
-  }
-
-  return false;
+  return {
+    recovered: Number(data ?? 0),
+    error: null
+  };
 }
 
 async function handleWork(request: Request) {
@@ -89,6 +58,9 @@ async function handleWork(request: Request) {
 
   const requestUrl = new URL(request.url);
   const requestedInspectionId = requestUrl.searchParams.get("inspection_id")?.trim() || null;
+  const force = requestUrl.searchParams.get("force") === "1";
+
+  const staleResult = await recoverStaleJobs();
 
   let inspectionsQuery = supabaseAdmin
     .from("inspections")
@@ -106,80 +78,64 @@ async function handleWork(request: Request) {
 
   if (inspectionsError) {
     return NextResponse.json(
-      { error: `Failed to fetch completed inspections: ${inspectionsError.message}` },
+      {
+        error: `Failed to fetch completed inspections: ${inspectionsError.message}`,
+        stale_recovered: staleResult.recovered,
+        stale_error: staleResult.error
+      },
       { status: 500 }
     );
   }
 
   const candidates = (completedInspections ?? []) as CompletedInspectionRecord[];
   if (!candidates.length) {
-    return NextResponse.json({ processed: 0, reason: "No completed inspections found." });
+    return NextResponse.json({
+      enqueued_jobs: 0,
+      inspections_considered: 0,
+      stale_recovered: staleResult.recovered,
+      stale_error: staleResult.error,
+      reason: "No completed inspections found."
+    });
   }
 
-  const inspectionIds = candidates.map((row) => row.id);
-  const { reportsByInspectionId } = await listInspectionReportsByInspectionIds(inspectionIds);
+  const results: Array<{ inspection_id: string; enqueued: number; hash?: string; error?: string }> = [];
+  let totalJobs = 0;
 
-  const targets = requestedInspectionId
-    ? candidates.slice(0, 1)
-    : candidates
-        .filter((inspection) =>
-          reportNeedsGeneration(inspection, reportsByInspectionId.get(inspection.id))
-        )
-        .slice(0, MAX_REPORTS_PER_RUN);
-
-  if (!targets.length) {
-    return NextResponse.json({ processed: 0, reason: "No reports pending generation." });
-  }
-
-  const results: Array<{ inspection_id: string; status: string; detail?: string }> = [];
-
-  for (const inspection of targets) {
-    const plannedStoragePath = buildInspectionReportPath(inspection.user_id, inspection.id);
-
+  for (const inspection of candidates) {
     try {
-      await upsertInspectionReport({
+      const enqueueResult = await enqueueReportJobsForInspection({
         inspectionId: inspection.id,
         userId: inspection.user_id,
-        status: "generating",
-        storageBucket: REPORTS_BUCKET,
-        storagePath: plannedStoragePath,
-        errorMessage: null,
-        sourceCompletedAt: inspection.completed_at
+        templateVersion: TEMPLATE_VERSION,
+        force
       });
 
-      const pdfBuffer = await generateInspectionReportPdf(inspection.id, inspection.user_id);
-      const uploaded = await uploadInspectionReportPdf(inspection.user_id, inspection.id, pdfBuffer);
+      const count = enqueueResult.createdJobs.length;
+      totalJobs += count;
 
-      await upsertInspectionReport({
-        inspectionId: inspection.id,
-        userId: inspection.user_id,
-        status: "completed",
-        storageBucket: uploaded.storageBucket,
-        storagePath: uploaded.storagePath,
-        generatedAt: new Date().toISOString(),
-        sourceCompletedAt: inspection.completed_at,
-        errorMessage: null
+      results.push({
+        inspection_id: inspection.id,
+        enqueued: count,
+        hash: enqueueResult.dataHash.slice(0, 16)
       });
-
-      results.push({ inspection_id: inspection.id, status: "completed" });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown report generation error";
-
-      await upsertInspectionReport({
-        inspectionId: inspection.id,
-        userId: inspection.user_id,
-        status: "failed",
-        storageBucket: REPORTS_BUCKET,
-        storagePath: plannedStoragePath,
-        sourceCompletedAt: inspection.completed_at,
-        errorMessage: message.slice(0, 4000)
+      results.push({
+        inspection_id: inspection.id,
+        enqueued: 0,
+        error: error instanceof Error ? error.message : "Unknown enqueue error"
       });
-
-      results.push({ inspection_id: inspection.id, status: "failed", detail: message });
     }
   }
 
-  return NextResponse.json({ processed: results.length, results });
+  return NextResponse.json({
+    enqueued_jobs: totalJobs,
+    inspections_considered: candidates.length,
+    stale_recovered: staleResult.recovered,
+    stale_error: staleResult.error,
+    force,
+    template_version: TEMPLATE_VERSION,
+    results
+  });
 }
 
 export async function GET(request: Request) {
