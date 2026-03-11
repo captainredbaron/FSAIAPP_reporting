@@ -44,7 +44,6 @@ export default async function ReportingDashboardPage() {
   const { data } = await supabase
     .from("inspections")
     .select("id,status,created_at,location,overall_risk,compliance_status,compliance_score")
-    .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(3000);
 

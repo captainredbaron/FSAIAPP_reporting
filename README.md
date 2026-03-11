@@ -5,6 +5,7 @@ Desktop-first reporting portal for the existing food safety inspection backend.
 ## Scope
 - Dashboard KPIs and trends (`/reporting`)
 - Inspections Explorer with filters and PDF access (`/reporting/inspections`)
+- Admin module for client setup, checklist builder, and assignments (`/reporting/admin`)
 - Shared Supabase auth/users with the capture app
 
 ## Reporting Pipeline v2 (Implemented)
@@ -35,6 +36,12 @@ Desktop-first reporting portal for the existing food safety inspection backend.
 Run in order:
 1. `supabase/migrations/0001_inspection_reports.sql`
 2. `supabase/migrations/0002_report_pipeline_v2.sql`
+3. `supabase/migrations/0003_client_checklists_and_assignments.sql`
+
+## Admin APIs
+- `GET|POST /api/admin/checklists` (version retrieval by `client_id`, draft creation)
+- `POST /api/admin/checklists/publish` (publish + activate version)
+- `GET|POST|PATCH /api/admin/assignments` (list/create/update assignment lifecycle)
 
 ## Cloud Run Worker
 - Worker lives at `workers/report-worker`

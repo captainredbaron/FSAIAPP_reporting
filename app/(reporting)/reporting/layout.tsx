@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { BarChart3, ClipboardList, LogOut } from "lucide-react";
+import { BarChart3, ClipboardList, LogOut, Settings2 } from "lucide-react";
 import { LogoutButton } from "@/components/auth/logout-button";
 import { GwrLogo } from "@/components/brand/gwr-logo";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,11 @@ const reportingNav = [
     href: "/reporting/inspections",
     label: "Explorer",
     icon: ClipboardList
+  },
+  {
+    href: "/reporting/admin",
+    label: "Admin",
+    icon: Settings2
   }
 ];
 

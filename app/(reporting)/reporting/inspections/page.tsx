@@ -76,6 +76,8 @@ export default async function ReportingExplorerPage({
 
   const fromDate = parseDateInput(firstValue(params.from));
   const toDate = parseDateInput(firstValue(params.to));
+  const clientFilter = firstValue(params.client_id)?.trim() ?? "";
+  const locationIdFilter = firstValue(params.location_id)?.trim() ?? "";
   const locationFilter = firstValue(params.location)?.trim() ?? "";
   const statusFilter = parseEnumValue(firstValue(params.status), STATUS_ORDER);
   const riskFilter = parseEnumValue(firstValue(params.risk), RISK_ORDER);
@@ -117,18 +119,23 @@ export default async function ReportingExplorerPage({
     let query = supabase
       .from("inspections")
       .select(
-        "id,status,created_at,location,overall_risk,compliance_status,compliance_score",
+        "id,status,created_at,location,overall_risk,compliance_status,compliance_score,client_id,location_id",
         {
           count: "exact"
         }
-      )
-      .eq("user_id", user.id);
+      );
 
     if (fromDate) {
       query = query.gte("created_at", `${fromDate}T00:00:00.000Z`);
     }
     if (toDate) {
       query = query.lte("created_at", `${toDate}T23:59:59.999Z`);
+    }
+    if (clientFilter) {
+      query = query.eq("client_id", clientFilter);
+    }
+    if (locationIdFilter) {
+      query = query.eq("location_id", locationIdFilter);
     }
     if (locationFilter) {
       query = query.ilike("location", `%${locationFilter}%`);
@@ -170,15 +177,62 @@ export default async function ReportingExplorerPage({
     return acc;
   }, new Map());
 
-  const { data: locationsData } = await supabase
-    .from("inspections")
-    .select("location")
-    .eq("user_id", user.id)
-    .not("location", "is", null)
-    .order("location", { ascending: true })
-    .limit(400);
+  const [membershipsResponse, locationTextResponse] = await Promise.all([
+    supabase
+      .from("client_user_roles")
+      .select("client_id")
+      .eq("user_id", user.id),
+    supabase
+      .from("inspections")
+      .select("location")
+      .not("location", "is", null)
+      .order("location", { ascending: true })
+      .limit(400)
+  ]);
 
-  const locationOptions = [...new Set((locationsData ?? []).map((row) => row.location?.trim() ?? ""))]
+  const clientIds = [
+    ...new Set(
+      ((membershipsResponse.data ?? []) as Array<{ client_id: string }>).map(
+        (row) => row.client_id
+      )
+    )
+  ];
+
+  const [clientsResponse, clientLocationsResponse] = await Promise.all([
+    clientIds.length
+      ? supabase
+          .from("clients")
+          .select("id,name")
+          .in("id", clientIds)
+          .order("name", { ascending: true })
+      : Promise.resolve({ data: [] as Array<{ id: string; name: string }> }),
+    clientIds.length
+      ? supabase
+          .from("client_locations")
+          .select("id,name,client_id,active")
+          .in("client_id", clientIds)
+          .eq("active", true)
+          .order("name", { ascending: true })
+      : Promise.resolve({
+          data: [] as Array<{ id: string; name: string; client_id: string; active: boolean }>
+        })
+  ]);
+
+  const clientOptions = (clientsResponse.data ?? []) as Array<{ id: string; name: string }>;
+  const clientLocationOptions = ((clientLocationsResponse.data ?? []) as Array<{
+    id: string;
+    name: string;
+    client_id: string;
+    active: boolean;
+  }>).filter((location) => !clientFilter || location.client_id === clientFilter);
+
+  const locationOptions = [
+    ...new Set(
+      ((locationTextResponse.data ?? []) as Array<{ location: string | null }>).map((row) =>
+        row.location?.trim() ?? ""
+      )
+    )
+  ]
     .filter(Boolean)
     .slice(0, 80);
 
@@ -210,6 +264,40 @@ export default async function ReportingExplorerPage({
             <div className="space-y-1.5">
               <Label htmlFor="to">To</Label>
               <Input id="to" name="to" type="date" defaultValue={toDate} />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="client_id">Client</Label>
+              <select
+                id="client_id"
+                name="client_id"
+                defaultValue={clientFilter}
+                className="h-11 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">All clients</option>
+                {clientOptions.map((client) => (
+                  <option key={client.id} value={client.id}>
+                    {client.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="location_id">Client Location</Label>
+              <select
+                id="location_id"
+                name="location_id"
+                defaultValue={locationIdFilter}
+                className="h-11 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">All locations</option>
+                {clientLocationOptions.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="space-y-1.5">

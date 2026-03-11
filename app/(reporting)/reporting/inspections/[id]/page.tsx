@@ -104,7 +104,6 @@ export default async function ReportingInspectionDetailPage({
     .from("inspections")
     .select("*")
     .eq("id", id)
-    .eq("user_id", user.id)
     .single();
 
   if (!inspection) {
